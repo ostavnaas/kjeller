@@ -1,0 +1,23 @@
+[tool.pylint.'MESSAGES CONTROL']
+
+max-line-length = 88
+
+disable = [
+  "missing-docstring",
+  "unused-argument",
+  "no-value-for-parameter",
+  "no-member",
+  "no-else-return",
+  "line-too-long",
+  "fixme",
+  "protected-access",
+  "too-few-public-methods",
+]
+
+
+[tool.pylint.MISCELLANEOUS]
+notes = ["FIXME"]
+
+
+[tool.pylint.BASIC]
+good-names= ["e", "r", "deConz"]

@@ -1,0 +1,33 @@
+global:
+  debug: true
+  sleep: 60
+  max_price: 0.50
+  lat: <lat>
+  long: <long>
+deconz:
+  endpoint: http://deconz.example.com
+  api_key: 7FEF3432
+tibber:
+  access_token: token
+  house_id: UUID
+room:
+  - name: livingroom
+    max_price: 0.42
+    uniqueid: id
+    temperature: 21
+    night_temperature: 15
+    schedule:
+      monday:
+        - 00:00-09:00
+        - 15:00-20:00
+      tuesday:
+        - 00:00-09:00
+      wednesday:
+        - 00:00-09:00
+      thursday:
+      friday:
+        - 00:00-09:00
+      saturday:
+        - 06:00-20:00
+      sunday:
+        - 06:00-21:00
