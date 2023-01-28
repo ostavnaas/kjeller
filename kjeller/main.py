@@ -113,32 +113,31 @@ class Tibber:
     def __init__(self, config: TibberConfig):
         self.house_id: str = config.house_id
         self.access_token: str = config.access_token
-        self.daily_price: dict = {}
-        self.kwh_price_now: float
+        self.daily_electricity_prices: dict | None = None
+        self.price_now: float | None = None
 
     @property
     def date_format(self) -> str:
         return "%Y-%m-%dT%H:%M:%S.%f%z"
 
     @property
-    def endpoint(self) -> str:
+    def api_endpoint(self) -> str:
         return "https://api.tibber.com/v1-beta/gql"
 
     @property
     def is_stale(self) -> bool:
-        return (
-            datetime.strptime(self.daily_price[0]["startsAt"], self.date_format).date()
+        return not self.daily_electricity_prices or (
+            datetime.strptime(
+                self.daily_electricity_prices[0]["startsAt"], self.date_format
+            ).date()
             != datetime.now().date()
         )
 
-    def update_prices_if_stale(self):
-        if not self.daily_price or self.is_stale:
-            self.get_daily_prices()
-        else:
-            logging.info("Tibber price is up-to-date")
-
-    def get_daily_prices(self) -> None:
-        headers = {"Authorization": f"Bearer {self.access_token}"}
+    def get_daily_electricity_pricess(self) -> None:
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "User-Agent": "Kjeller/0.1",
+        }
         variables = {"house_id": self.house_id}
         query = """
             query ( $house_id: ID!)  {
@@ -161,21 +160,18 @@ class Tibber:
                 }
                 """
         try:
-            r = httpx.post(
-                self.endpoint,
+            response = httpx.post(
+                self.api_endpoint,
                 json={"query": query, "variables": variables},
                 headers=headers,
             )
-            r.raise_for_status()
+            response.raise_for_status()
         except httpx.RequestError as e:
+            self.daily_electricity_prices = None
             logging.error("Tibber api error %s", e)
-            raise TibberApiError from e
+            return
 
-        if r.status_code != 200:
-            logging.error("Tibber api http status code: %s", r.status_code)
-            raise TibberApiError
-
-        self.daily_price = self.get_from_dict(r.json())
+        self.daily_electricity_prices = self.get_from_dict(response.json())
 
     def get_from_dict(self, data: dict) -> dict:
         nested_keys: list = [
@@ -196,36 +192,43 @@ class Tibber:
             raise TibberApiError from e
         return data
 
-    def update_current_price(self):
-        try:
-            self.update_prices_if_stale()
-        except TibberApiError:
-            self.kwh_price_now = None
+    def update_electricity_prices(self):
+        if self.is_stale:
+            self.get_daily_electricity_pricess()
+
+        if self.daily_electricity_prices is None:
+            self.price_now = None
+            return
 
         utc_now = datetime.now(tz=timezone.utc)
-        for price in self.daily_price:
+        for price in self.daily_electricity_prices:
             starts_at = datetime.strptime(
                 price["startsAt"], self.date_format
             ).astimezone(tz=timezone.utc)
             ends_at = starts_at + timedelta(minutes=60)
 
             if starts_at <= utc_now < ends_at:
-                self.kwh_price_now = price["total"]
+                with open(
+                    "/home/oves/python3/gcal/tibber", "w", encoding="utf-8"
+                ) as file:
+                    file.write(str(price["total"]))
+                self.price_now = price["total"]
+                logging.info("Electricity price %s KwH", self.price_now)
                 break
         else:
-            self.kwh_price_now = None
+            self.price_now = None
 
     def exceed_max_price(self, price_cut_off: float | None) -> bool:
-        if not self.kwh_price_now or price_cut_off is None:
+        if not self.price_now or price_cut_off is None:
             logging.info("Tibber price not avilable or no cut off")
             return False
-        if self.kwh_price_now < price_cut_off:
+        if self.price_now < price_cut_off:
             return False
 
         return True
 
 
-def adjust_temperature(uniqueid: str, temperature: int, deconz: deConz) -> bool:
+def adjust_temperature(uniqueid: str, temperature: int, deconz: deConz) -> None:
     set_temp: int = 0
 
     if temperature <= 5 or temperature >= 25:
@@ -238,13 +241,9 @@ def adjust_temperature(uniqueid: str, temperature: int, deconz: deConz) -> bool:
     payload = {"heatsetpoint": set_temp}
     try:
         response = httpx.put(url, json=payload)
-        if response.status_code != 200:
-            return False
+        response.raise_for_status()
     except httpx.RequestError as e:
-        print(f"set_temperature failed: {e}")
-        return False
-
-    return True
+        logging.error("%s API failed: %s", deconz.endpoint, e)
 
 
 def update_prom(sensors):
@@ -339,7 +338,7 @@ def set_schedule(config: Config, tibber: Tibber):
             logging.info(
                 "%s: KWH %s NOK, and above maxprice",
                 room.name,
-                tibber.kwh_price_now,
+                tibber.price_now,
             )
         elif room.schedule.within_time_range:
             set_temperature = room.temperature or config.global_config.temperature or 10
@@ -359,7 +358,7 @@ def main():
     tbr = Tibber(config.tibber)
     while True:
         config = load_config()
-        tbr.update_current_price()
+        tbr.update_electricity_prices()
         set_schedule(config, tbr)
         sleep(config.global_config.sleep)
 
