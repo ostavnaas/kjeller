@@ -1,11 +1,11 @@
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
+from pathlib import Path
 from time import sleep
 
 import httpx
-import pytz
 import yaml
 
 
@@ -75,6 +75,7 @@ class RoomConfig:
     max_price: float | None = None
 
     def __post_init__(self):
+        assert isinstance(self.schedule, dict)
         self.schedule = Schedule({Weekday(k): v for k, v in self.schedule.items()})
 
 
@@ -200,16 +201,15 @@ class Tibber:
             self.price_now = None
             return
 
-        utc_now = datetime.now(tz=timezone.utc)
         for price in self.daily_electricity_prices:
             starts_at = datetime.strptime(
                 price["startsAt"], self.date_format
-            ).astimezone(tz=timezone.utc)
+            ).astimezone(UTC)
             ends_at = starts_at + timedelta(minutes=60)
 
-            if starts_at <= utc_now < ends_at:
-                with open(
-                    "/home/oves/python3/gcal/tibber", "w", encoding="utf-8"
+            if starts_at <= datetime.now(UTC) < ends_at:
+                with Path("/home/oves/python3/gcal/tibber", "w").open(
+                    encoding="utc-8"
                 ) as file:
                     file.write(str(price["total"]))
                 self.price_now = price["total"]
@@ -328,7 +328,6 @@ def time_in_range(start: str, end: str) -> bool:
 
 
 def set_schedule(config: Config, tibber: Tibber):
-
     for room in config.room:
         set_temperature = (
             room.night_temperature or config.global_config.night_temperature or 10
