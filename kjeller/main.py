@@ -274,7 +274,11 @@ def predict_hourly_consumation(
 def get_heatsetpoint_sensor(uniqueid: str, deconz: deConz) -> float | None:
     url = f"{deconz.endpoint}/api/{deconz.api_key}/sensors/{uniqueid}"
 
-    response = httpx.get(url)
+    try:
+        response = httpx.get(url)
+    except httpx.RequestError as e:
+        logging.error("%s API failed: %s", deconz.endpoint, e)
+        return None
     if response.status_code != 200:
         print(f"Failed to Adjusting temperature: {response.text}")
         return None
