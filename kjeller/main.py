@@ -34,7 +34,7 @@ class Weekday(Enum):
 
 class Schedule:
     def __init__(self, schedule: dict[Weekday, list[str]]):
-        self.schedules = schedule
+        self.schedules: dict[Weekday, list[str]] = schedule
 
     @property
     def todays_schedules(self) -> list[str] | None:
@@ -48,17 +48,17 @@ class Schedule:
     def within_time_range(self) -> bool:
         if self.todays_schedules is None:
             return False
-        now = datetime.now()
+        now: datetime = datetime.now()
         try:
             for schdule in self.todays_schedules:
-                start = datetime.combine(
+                start: datetime = datetime.combine(
                     now, datetime.strptime(schdule.split("-")[0], "%H:%M").time()
                 )
 
-                end = datetime.combine(
+                end: datetime = datetime.combine(
                     now, datetime.strptime(schdule.split("-")[1], "%H:%M").time()
                 )
-                if start < now < end:
+                if start <= now <= end:
                     return True
         except ValueError:
             return False
@@ -263,12 +263,12 @@ def update_prom(sensors):
 
 
 def predict_hourly_consumation(
-    accumulated_consumation: float, current_consumption: float, max_hourly_consumation
+    accumulated_consumption: float, current_consumption: float, max_hourly_consumption
 ) -> bool:
     now = datetime.now()
     return (
-        accumulated_consumation + current_consumption * ((60 - now.minute) / 60)
-    ) >= max_hourly_consumation
+        accumulated_consumption + current_consumption * ((60 - now.minute) / 60)
+    ) >= max_hourly_consumption
 
 
 def get_heatsetpoint_sensor(uniqueid: str, deconz: deConz) -> float | None:
@@ -321,8 +321,11 @@ def time_in_range(start: str, end: str) -> bool:
     now = datetime.now()
     try:
         schdule_start = datetime.combine(now, datetime.strptime(start, "%H:%M").time())
-
         schdule_end = datetime.combine(now, datetime.strptime(end, "%H:%M").time())
+
+        if datetime.strftime(schdule_end, "%H:%M") == "00.00":
+            schdule_end = schdule_end - timedelta(minutes=1)
+
         if schdule_start < now < schdule_end:
             return True
     except ValueError:
@@ -363,7 +366,7 @@ def main():
         config = load_config()
         tbr.update_electricity_prices()
         set_schedule(config, tbr)
-        sleep(config.global_config.sleep)
+        sleep(config.global_config.sleep or 60)
 
 
 if __name__ == "__main__":
