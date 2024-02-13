@@ -208,7 +208,8 @@ class Tibber:
             ends_at = starts_at + timedelta(minutes=60)
 
             if starts_at <= datetime.now(UTC) < ends_at:
-                with Path("/home/oves/python3/gcal/tibber", "w").open(
+                with Path("/home/oves/python3/gcal/tibber").open(
+                    mode="w",
                     encoding="utc-8"
                 ) as file:
                     file.write(str(price["total"]))
