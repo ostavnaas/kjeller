@@ -38,7 +38,7 @@ class Schedule:
 
     @property
     def todays_schedules(self) -> list[str] | None:
-        day_of_week = Weekday(datetime.now().strftime("%A").lower())
+        day_of_week = Weekday(datetime.now(UTC).strftime("%A").lower())
         if day_of_week in self.schedules:
             return self.schedules[day_of_week]
 
@@ -48,16 +48,16 @@ class Schedule:
     def within_time_range(self) -> bool:
         if self.todays_schedules is None:
             return False
-        now: datetime = datetime.now()
+        now = datetime.now(UTC)
         try:
             for schdule in self.todays_schedules:
-                start: datetime = datetime.combine(
+                start = datetime.combine(
                     now, datetime.strptime(schdule.split("-")[0], "%H:%M").time()
-                )
+                ).astimezone(UTC)
 
-                end: datetime = datetime.combine(
+                end = datetime.combine(
                     now, datetime.strptime(schdule.split("-")[1], "%H:%M").time()
-                )
+                ).astimezone(UTC)
                 if start <= now <= end:
                     return True
         except ValueError:
@@ -131,10 +131,10 @@ class Tibber:
             datetime.strptime(
                 self.daily_electricity_prices[0]["startsAt"], self.date_format
             ).date()
-            != datetime.now().date()
+            != datetime.now(UTC).date()
         )
 
-    def get_daily_electricity_pricess(self) -> None:
+    def update_daily_electricity_prices(self) -> None:
         headers = {
             "Authorization": f"Bearer {self.access_token}",
             "User-Agent": "Kjeller/0.1",
@@ -168,9 +168,8 @@ class Tibber:
             )
             response.raise_for_status()
         except httpx.RequestError as e:
-            self.daily_electricity_prices = None
             logging.error("Tibber api error %s", e)
-            return
+            raise TibberApiError from e
 
         self.daily_electricity_prices = self.get_from_dict(response.json())
 
@@ -195,7 +194,10 @@ class Tibber:
 
     def update_electricity_prices(self):
         if self.is_stale:
-            self.get_daily_electricity_pricess()
+            try:
+                self.update_daily_electricity_prices()
+            except TibberApiError:
+                self.daily_electricity_prices = None
 
         if self.daily_electricity_prices is None:
             self.price_now = None
@@ -209,8 +211,7 @@ class Tibber:
 
             if starts_at <= datetime.now(UTC) < ends_at:
                 with Path("/home/oves/python3/gcal/tibber").open(
-                    mode="w",
-                    encoding="utf-8"
+                    mode="w", encoding="utf-8"
                 ) as file:
                     file.write(str(price["total"]))
                 self.price_now = price["total"]
@@ -266,7 +267,7 @@ def update_prom(sensors):
 def predict_hourly_consumation(
     accumulated_consumption: float, current_consumption: float, max_hourly_consumption
 ) -> bool:
-    now = datetime.now()
+    now = datetime.now(UTC)
     return (
         accumulated_consumption + current_consumption * ((60 - now.minute) / 60)
     ) >= max_hourly_consumption
@@ -319,10 +320,14 @@ def ensure_temperature(
 
 
 def time_in_range(start: str, end: str) -> bool:
-    now = datetime.now()
+    now = datetime.now(UTC)
     try:
-        schdule_start = datetime.combine(now, datetime.strptime(start, "%H:%M").time())
-        schdule_end = datetime.combine(now, datetime.strptime(end, "%H:%M").time())
+        schdule_start = datetime.combine(
+            now, datetime.strptime(start, "%H:%M").time()
+        ).astimezone(UTC)
+        schdule_end = datetime.combine(
+            now, datetime.strptime(end, "%H:%M").time()
+        ).astimezone(UTC)
 
         if datetime.strftime(schdule_end, "%H:%M") == "00.00":
             schdule_end = schdule_end - timedelta(minutes=1)
