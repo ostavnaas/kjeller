@@ -1,16 +1,63 @@
 import logging
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from time import sleep
+from typing import Annotated
 
 import httpx
 import yaml
+from pydantic import AfterValidator, AliasPath, BaseModel, Field, ValidationError
 
 
 class TibberApiError(Exception):
     pass
+
+
+def convert_to_fraction(v: int) -> float:
+    return v / 100
+
+
+class Termostat(BaseModel):
+    name: Annotated[str, AfterValidator(str.lower)]
+    temperature: Annotated[
+        float,
+        AfterValidator(convert_to_fraction),
+        Field(validation_alias=AliasPath("state", "temperature")),
+    ]
+    floor_temperatur: Annotated[
+        float,
+        AfterValidator(convert_to_fraction),
+        Field(validation_alias=AliasPath("state", "floortemperature")),
+    ]
+    heat_set_point: Annotated[
+        float,
+        AfterValidator(convert_to_fraction),
+        Field(validation_alias=AliasPath("config", "heatsetpoint")),
+    ]
+    heating: Annotated[bool, Field(validation_alias=AliasPath("state", "heating"))]
+
+
+class HourlyPrice(BaseModel):
+    total: float
+    start_at: Annotated[datetime, Field(validation_alias="startsAt")]
+
+    @property
+    def end_at(self) -> datetime:
+        return self.start_at + timedelta(minutes=60)
+
+
+class DailyPrices(BaseModel):
+    prices: Annotated[
+        list[HourlyPrice],
+        Field(
+            validation_alias=AliasPath(
+                "data", "viewer", "home", "currentSubscription", "priceInfo", "today"
+            )
+        ),
+    ]
 
 
 @dataclass
@@ -22,7 +69,7 @@ class PrometheusExport:
     heating: bool
 
 
-class Weekday(Enum):
+class Weekday(str, Enum):
     MONDAY = "monday"
     TUESDAY = "tuesday"
     WEDNESDAY = "wednesday"
@@ -32,15 +79,19 @@ class Weekday(Enum):
     SUNDAY = "sunday"
 
 
-class Schedule:
-    def __init__(self, schedule: dict[Weekday, list[str]]):
-        self.schedules: dict[Weekday, list[str]] = schedule
+class RoomConfig(BaseModel):
+    name: str
+    uniqueid: str
+    schedule: dict[Weekday, list[str] | None]
+    temperature: int | None = None
+    night_temperature: int | None = None
+    max_price: float | None = None
 
     @property
     def todays_schedules(self) -> list[str] | None:
         day_of_week = Weekday(datetime.now(UTC).strftime("%A").lower())
-        if day_of_week in self.schedules:
-            return self.schedules[day_of_week]
+        if day_of_week in self.schedule:
+            return self.schedule[day_of_week]
 
         return None
 
@@ -65,22 +116,7 @@ class Schedule:
         return False
 
 
-@dataclass
-class RoomConfig:
-    name: str
-    uniqueid: str
-    schedule: Schedule
-    temperature: int | None = None
-    night_temperature: int | None = None
-    max_price: float | None = None
-
-    def __post_init__(self):
-        assert isinstance(self.schedule, dict)
-        self.schedule = Schedule({Weekday(k): v for k, v in self.schedule.items()})
-
-
-@dataclass
-class TibberConfig:
+class TibberConfig(BaseModel):
     access_token: str
     house_id: str
 
@@ -91,8 +127,7 @@ class deConz:
     api_key: str
 
 
-@dataclass
-class GlobalConfig:
+class GlobalConfig(BaseModel):
     debug: bool
     sleep: int
     lat: float
@@ -102,9 +137,8 @@ class GlobalConfig:
     night_temperature: int | None = None
 
 
-@dataclass
-class Config:
-    global_config: GlobalConfig
+class Config(BaseModel):
+    global_config: Annotated[GlobalConfig, Field(validation_alias="global")]
     tibber: TibberConfig
     room: list[RoomConfig]
     deconz: deConz
@@ -114,7 +148,7 @@ class Tibber:
     def __init__(self, config: TibberConfig):
         self.house_id: str = config.house_id
         self.access_token: str = config.access_token
-        self.daily_electricity_prices: dict | None = None
+        self.daily_electricity_prices: DailyPrices | None = None
         self.price_now: float | None = None
 
     @property
@@ -127,14 +161,13 @@ class Tibber:
 
     @property
     def is_stale(self) -> bool:
-        return not self.daily_electricity_prices or (
-            datetime.strptime(
-                self.daily_electricity_prices[0]["startsAt"], self.date_format
-            ).date()
+        return (
+            not self.daily_electricity_prices
+            or self.daily_electricity_prices.prices[0].start_at.date()
             != datetime.now(UTC).date()
         )
 
-    def update_daily_electricity_prices(self) -> None:
+    def update_daily_electricity_prices(self) -> DailyPrices:
         headers = {
             "Authorization": f"Bearer {self.access_token}",
             "User-Agent": "Kjeller/0.1",
@@ -171,51 +204,28 @@ class Tibber:
             logging.error("Tibber api error %s", e)
             raise TibberApiError from e
 
-        self.daily_electricity_prices = self.get_from_dict(response.json())
-
-    def get_from_dict(self, data: dict) -> dict:
-        nested_keys: list = [
-            "data",
-            "viewer",
-            "home",
-            "currentSubscription",
-            "priceInfo",
-            "today",
-        ]
-
-        try:
-            for key in nested_keys:
-                data = data[key]
-            logging.info("Tibber price updated")
-        except KeyError as e:
-            logging.error("KeyError from TibberAPI json")
-            raise TibberApiError from e
-        return data
+        return DailyPrices.model_validate_json(response.content)
 
     def update_electricity_prices(self):
         if self.is_stale:
             try:
-                self.update_daily_electricity_prices()
-            except TibberApiError:
+                self.daily_electricity_prices = self.update_daily_electricity_prices()
+            except (TibberApiError, ValidationError):
+                logging.exception("Could not update Tibber price")
                 self.daily_electricity_prices = None
 
         if self.daily_electricity_prices is None:
             self.price_now = None
             return
 
-        for price in self.daily_electricity_prices:
-            starts_at = datetime.strptime(
-                price["startsAt"], self.date_format
-            ).astimezone(UTC)
-            ends_at = starts_at + timedelta(minutes=60)
-
-            if starts_at <= datetime.now(UTC) < ends_at:
+        for price in self.daily_electricity_prices.prices:
+            if price.start_at <= datetime.now(UTC) < price.end_at:
                 with Path("/home/oves/python3/gcal/tibber").open(
                     mode="w", encoding="utf-8"
                 ) as file:
-                    file.write(str(price["total"]))
-                self.price_now = price["total"]
-                logging.info("Electricity price %s KwH", self.price_now)
+                    file.write(str(price.total))
+                self.price_now = price.total
+                logging.info("Electricity price %s kr/KwH", self.price_now)
                 break
         else:
             self.price_now = None
@@ -248,32 +258,18 @@ def adjust_temperature(uniqueid: str, temperature: int, deconz: deConz) -> None:
         logging.error("%s API failed: %s", deconz.endpoint, e)
 
 
-def update_prom(sensors):
-    name = sensors["name"].lower()
-    temperature = sensors["state"]["temperature"] / 100
-    floortemperature = sensors["state"]["floortemperature"] / 100
-    heatsetpoint = sensors["config"]["heatsetpoint"] / 100
-    heating = sensors["state"]["heating"]
-
-    if not name:
-        return
-    with open(f"prom/{name}.prom", "w", encoding="utf-8") as file:
-        file.write(f'deconz_temperature{{name="{name}"}} {temperature}\n')
-        file.write(f'deconz_floortemperature{{name="{name}"}} {floortemperature}\n')
-        file.write(f'deconz_heatsetpoint{{name="{name}"}} {heatsetpoint}\n')
-        file.write(f'deconz_heating{{name="{name}"}} {int(heating)}\n')
+def write_stats_to_prometheuse(termostat: Termostat):
+    name = termostat.name
+    with open(f"prom/{termostat.name}.prom", "w", encoding="utf-8") as file:
+        file.write(f'deconz_temperature{{name="{name}"}} {termostat.temperature}\n')
+        file.write(
+            f'deconz_floortemperature{{name="{name}"}} {termostat.floor_temperatur}\n'
+        )
+        file.write(f'deconz_heatsetpoint{{name="{name}"}} {termostat.heat_set_point}\n')
+        file.write(f'deconz_heating{{name="{name}"}} {int(termostat.heating)}\n')
 
 
-def predict_hourly_consumation(
-    accumulated_consumption: float, current_consumption: float, max_hourly_consumption
-) -> bool:
-    now = datetime.now(UTC)
-    return (
-        accumulated_consumption + current_consumption * ((60 - now.minute) / 60)
-    ) >= max_hourly_consumption
-
-
-def get_heatsetpoint_sensor(uniqueid: str, deconz: deConz) -> float | None:
+def get_heatsetpoint_sensor(uniqueid: str, deconz: deConz) -> Termostat | None:
     url = f"{deconz.endpoint}/api/{deconz.api_key}/sensors/{uniqueid}"
 
     try:
@@ -285,38 +281,32 @@ def get_heatsetpoint_sensor(uniqueid: str, deconz: deConz) -> float | None:
         print(f"Failed to Adjusting temperature: {response.text}")
         return None
 
-    sensors = response.json()
+    sensor = Termostat.model_validate_json(response.content)
     logging.info(
         "%s: Temperature: %s, Floortemperature: %s, heatsetpoint: %s, heating: %s",
-        sensors["name"],
-        sensors["state"]["temperature"],
-        sensors["state"]["floortemperature"],
-        sensors["config"]["heatsetpoint"],
-        sensors["state"]["heating"],
+        sensor.name,
+        sensor.temperature,
+        sensor.floor_temperatur,
+        sensor.heat_set_point,
+        sensor.heating,
     )
-    update_prom(sensors)
-    return int((sensors["config"]["heatsetpoint"]) / 100)
+    return sensor
 
 
 def load_config() -> Config:
-    config: dict = {}
     with open("config.yaml", "r", encoding="utf-8") as file:
-        config = yaml.full_load(file)
-
-    return Config(
-        global_config=GlobalConfig(**config.pop("global")),
-        room=[RoomConfig(**x) for x in config.pop("room")],
-        tibber=TibberConfig(**config.pop("tibber")),
-        deconz=deConz(**config.pop("deconz")),
-    )
+        return Config.model_validate(yaml.full_load(file))
 
 
 def ensure_temperature(
     uniqueid: str, set_temperature: int, room_name: str, deconz: deConz
 ):
-    if get_heatsetpoint_sensor(uniqueid, deconz) != set_temperature:
+    if (
+        termostat := get_heatsetpoint_sensor(uniqueid, deconz)
+    ) is not None and termostat.temperature != set_temperature:
         logging.info("%s: Setting new temperature %s", room_name, set_temperature)
         adjust_temperature(uniqueid, set_temperature, deconz)
+        write_stats_to_prometheuse(termostat)
 
 
 def time_in_range(start: str, end: str) -> bool:
@@ -352,7 +342,7 @@ def set_schedule(config: Config, tibber: Tibber):
                 room.name,
                 tibber.price_now,
             )
-        elif room.schedule.within_time_range:
+        elif room.within_time_range:
             set_temperature = room.temperature or config.global_config.temperature or 10
 
         ensure_temperature(room.uniqueid, set_temperature, room.name, config.deconz)
@@ -360,7 +350,7 @@ def set_schedule(config: Config, tibber: Tibber):
 
 def main():
     logging.basicConfig(
-        filename="heat.log",
+        stream=sys.stdout,
         format="%(asctime)s: %(message)s",
         datefmt="%d-%m-%YT%H:%M:%S%z",
         level=logging.INFO,
