@@ -301,11 +301,10 @@ def load_config() -> Config:
 def ensure_temperature(
     uniqueid: str, set_temperature: int, room_name: str, deconz: deConz
 ):
-    if (
-        termostat := get_heatsetpoint_sensor(uniqueid, deconz)
-    ) is not None and termostat.temperature != set_temperature:
-        logging.info("%s: Setting new temperature %s", room_name, set_temperature)
-        adjust_temperature(uniqueid, set_temperature, deconz)
+    if (termostat := get_heatsetpoint_sensor(uniqueid, deconz)) is not None:
+        if termostat.heat_set_point != set_temperature:
+            logging.info("%s: Setting new temperature %s", room_name, set_temperature)
+            adjust_temperature(uniqueid, set_temperature, deconz)
         write_stats_to_prometheuse(termostat)
 
 
