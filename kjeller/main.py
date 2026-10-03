@@ -11,6 +11,8 @@ import httpx
 import yaml
 from pydantic import AfterValidator, AliasPath, BaseModel, Field, ValidationError
 
+logger = logging.getLogger(__name__)
+
 
 class TibberApiError(Exception):
     pass
@@ -152,20 +154,18 @@ class Tibber:
         self.price_now: float | None = None
 
     @property
-    def date_format(self) -> str:
-        return "%Y-%m-%dT%H:%M:%S.%f%z"
-
-    @property
     def api_endpoint(self) -> str:
         return "https://api.tibber.com/v1-beta/gql"
 
     @property
     def is_stale(self) -> bool:
-        return (
+        if (
             not self.daily_electricity_prices
-            or self.daily_electricity_prices.prices[0].start_at.date()
-            != datetime.now(UTC).date()
-        )
+            or not self.daily_electricity_prices.prices
+        ):
+            return True
+        first_start = self.daily_electricity_prices.prices[0].start_at
+        return first_start.date() != datetime.now(first_start.tzinfo).date()
 
     def update_daily_electricity_prices(self) -> DailyPrices:
         headers = {
@@ -200,8 +200,8 @@ class Tibber:
                 headers=headers,
             )
             response.raise_for_status()
-        except httpx.RequestError as e:
-            logging.error("Tibber api error %s", e)
+        except httpx.HTTPError as e:
+            logger.error("Tibber api error %s", e)
             raise TibberApiError from e
 
         return DailyPrices.model_validate_json(response.content)
@@ -211,7 +211,7 @@ class Tibber:
             try:
                 self.daily_electricity_prices = self.update_daily_electricity_prices()
             except (TibberApiError, ValidationError):
-                logging.exception("Could not update Tibber price")
+                logger.exception("Could not update Tibber price")
                 self.daily_electricity_prices = None
 
         if self.daily_electricity_prices is None:
@@ -225,14 +225,14 @@ class Tibber:
                 ) as file:
                     file.write(str(price.total))
                 self.price_now = price.total
-                logging.info("Electricity price %s kr/KwH", self.price_now)
+                logger.info("Electricity price %s kr/KwH", self.price_now)
                 break
         else:
             self.price_now = None
 
     def exceed_max_price(self, price_cut_off: float | None) -> bool:
         if not self.price_now or price_cut_off is None:
-            logging.info("Tibber price not avilable or no cut off")
+            logger.info("Tibber price not avilable or no cut off")
             return False
         if self.price_now < price_cut_off:
             return False
@@ -254,8 +254,8 @@ def adjust_temperature(uniqueid: str, temperature: int, deconz: deConz) -> None:
     try:
         response = httpx.put(url, json=payload)
         response.raise_for_status()
-    except httpx.RequestError as e:
-        logging.error("%s API failed: %s", deconz.endpoint, e)
+    except httpx.HTTPError as e:
+        logger.error("%s API failed: %s", deconz.endpoint, e)
 
 
 def write_stats_to_prometheuse(termostat: Termostat):
@@ -275,14 +275,18 @@ def get_heatsetpoint_sensor(uniqueid: str, deconz: deConz) -> Termostat | None:
     try:
         response = httpx.get(url)
     except httpx.RequestError as e:
-        logging.error("%s API failed: %s", deconz.endpoint, e)
+        logger.error("%s API failed: %s", deconz.endpoint, e)
         return None
     if response.status_code != 200:
-        print(f"Failed to Adjusting temperature: {response.text}")
+        logger.error("Failed to get sensor %s: %s", uniqueid, response.text)
         return None
 
-    sensor = Termostat.model_validate_json(response.content)
-    logging.info(
+    try:
+        sensor = Termostat.model_validate_json(response.content)
+    except ValidationError:
+        logger.exception("Unexpected sensor data for %s", uniqueid)
+        return None
+    logger.info(
         "%s: Temperature: %s, Floortemperature: %s, heatsetpoint: %s, heating: %s",
         sensor.name,
         sensor.temperature,
@@ -303,30 +307,9 @@ def ensure_temperature(
 ):
     if (termostat := get_heatsetpoint_sensor(uniqueid, deconz)) is not None:
         if termostat.heat_set_point != set_temperature:
-            logging.info("%s: Setting new temperature %s", room_name, set_temperature)
+            logger.info("%s: Setting new temperature %s", room_name, set_temperature)
             adjust_temperature(uniqueid, set_temperature, deconz)
         write_stats_to_prometheuse(termostat)
-
-
-def time_in_range(start: str, end: str) -> bool:
-    now = datetime.now(UTC)
-    try:
-        schdule_start = datetime.combine(
-            now, datetime.strptime(start, "%H:%M").time()
-        ).astimezone(UTC)
-        schdule_end = datetime.combine(
-            now, datetime.strptime(end, "%H:%M").time()
-        ).astimezone(UTC)
-
-        if datetime.strftime(schdule_end, "%H:%M") == "00.00":
-            schdule_end = schdule_end - timedelta(minutes=1)
-
-        if schdule_start < now < schdule_end:
-            return True
-    except ValueError:
-        return False
-
-    return False
 
 
 def set_schedule(config: Config, tibber: Tibber):
@@ -336,7 +319,7 @@ def set_schedule(config: Config, tibber: Tibber):
         )
 
         if tibber.exceed_max_price(room.max_price or config.global_config.max_price):
-            logging.info(
+            logger.info(
                 "%s: KWH %s NOK, and above maxprice",
                 room.name,
                 tibber.price_now,

@@ -1,9 +1,9 @@
-FROM python:3.10-slim as base
-ENV LANG C.UTF-8
-ENV LC_ALL C.UTF.8
+FROM python:3.12-slim AS base
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
 
-from base AS python-deps
+FROM base AS python-deps
 RUN pip install pipenv
 COPY Pipfile .
 COPY Pipfile.lock .

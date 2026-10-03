@@ -5,7 +5,6 @@ name = "pypi"
 
 [packages]
 httpx = "*"
-pytz = "*"
 pyyaml = "*"
 pydantic = "*"
 
@@ -13,7 +12,6 @@ pydantic = "*"
 mypy = "*"
 ruff = "*"
 pyright = "*"
-types-pytz = "*"
 types-pyyaml = "*"
 
 [requires]
