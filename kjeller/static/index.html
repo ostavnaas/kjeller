@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kjeller</title>
+<style>
+  :root {
+    --bg: #f5f5f4;
+    --card: #ffffff;
+    --text: #1c1917;
+    --muted: #78716c;
+    --border: #e7e5e4;
+    --accent: #2563eb;
+    --heat: #ea580c;
+    --override: #7c3aed;
+    --error: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1917;
+      --card: #292524;
+      --text: #f5f5f4;
+      --muted: #a8a29e;
+      --border: #44403c;
+      --accent: #60a5fa;
+      --heat: #fb923c;
+      --override: #a78bfa;
+      --error: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.4 system-ui, sans-serif;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: 1200px;
+    margin: 0 auto 16px;
+  }
+  h1 { margin: 0; font-size: 22px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  main {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .card h2 { margin: 0 0 8px; font-size: 18px; text-transform: capitalize; }
+  .now { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .temp { font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .badge {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .badge.heating { color: var(--heat); border-color: var(--heat); }
+  .details { margin: 4px 0 12px; }
+  form { border-top: 1px solid var(--border); padding-top: 12px; }
+  .row {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .row label { text-transform: capitalize; font-size: 13px; }
+  .row label.overridden { color: var(--override); font-weight: 600; }
+  input {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+  input[type=number] { width: 80px; }
+  h3 { font-size: 13px; margin: 12px 0 6px; color: var(--muted); font-weight: 600; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+  button {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .message { font-size: 13px; }
+  .message.error { color: var(--error); }
+  .legend { color: var(--override); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kjeller</h1>
+  <div class="muted" id="summary">Loading…</div>
+</header>
+<main id="rooms"></main>
+
+<template id="room-template">
+  <section class="card">
+    <h2></h2>
+    <div class="now">
+      <span class="temp" data-field="temperature">–</span>
+      <span class="badge" data-field="heating"></span>
+    </div>
+    <div class="details muted" data-field="details"></div>
+    <form>
+      <div class="row">
+        <label data-for="temperature">Day °C</label>
+        <input type="number" name="temperature" min="6" max="24" step="1">
+      </div>
+      <div class="row">
+        <label data-for="night_temperature">Night °C</label>
+        <input type="number" name="night_temperature" min="6" max="24" step="1">
+      </div>
+      <h3>Schedule (day temperature), e.g. 06:00-09:00, 15:00-20:00</h3>
+      <div data-field="schedule"></div>
+      <div class="actions">
+        <button type="submit" class="primary">Save</button>
+        <button type="button" data-action="reset">Reset to config</button>
+        <span class="message"></span>
+      </div>
+    </form>
+  </section>
+</template>
+
+<script>
+const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const REASONS = { schedule: "day schedule", night: "night", price: "price above max" };
+const cards = new Map();
+
+function formatSchedule(ranges) {
+  return (ranges || []).join(", ");
+}
+
+function parseSchedule(text) {
+  const ranges = text.split(",").map((s) => s.trim()).filter(Boolean);
+  return ranges.length ? ranges : null;
+}
+
+function sameSchedule(a, b) {
+  return DAYS.every((day) => formatSchedule(a[day]) === formatSchedule(b[day]));
+}
+
+function createCard(room) {
+  const node = document.getElementById("room-template").content.firstElementChild.cloneNode(true);
+  node.querySelector("h2").textContent = room.name;
+
+  const scheduleEl = node.querySelector('[data-field="schedule"]');
+  for (const day of DAYS) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const label = document.createElement("label");
+    label.textContent = day;
+    label.dataset.for = `schedule.${day}`;
+    const input = document.createElement("input");
+    input.name = `schedule.${day}`;
+    input.placeholder = "night all day";
+    row.append(label, input);
+    scheduleEl.append(row);
+  }
+
+  const form = node.querySelector("form");
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    save(room.name, readForm(form, cards.get(room.name).room));
+  });
+  node.querySelector('[data-action="reset"]').addEventListener("click", () => {
+    save(room.name, { temperature: null, night_temperature: null, schedule: null });
+  });
+
+  document.getElementById("rooms").append(node);
+  const card = { node, room };
+  cards.set(room.name, card);
+  fillForm(card, room);
+  return card;
+}
+
+// Values equal to config.yaml are sent as null, so they keep following the config.
+function readForm(form, room) {
+  const number = (name, configValue) => {
+    const value = form.elements[name].value.trim();
+    if (value === "" || Number(value) === configValue) return null;
+    return Number(value);
+  };
+  const schedule = {};
+  for (const day of DAYS) schedule[day] = parseSchedule(form.elements[`schedule.${day}`].value);
+  return {
+    temperature: number("temperature", room.config.temperature),
+    night_temperature: number("night_temperature", room.config.night_temperature),
+    schedule: sameSchedule(schedule, room.config.schedule) ? null : schedule,
+  };
+}
+
+function fillForm(card, room) {
+  card.room = room;
+  const form = card.node.querySelector("form");
+  form.elements.temperature.value = room.effective.temperature;
+  form.elements.temperature.placeholder = room.config.temperature;
+  form.elements.night_temperature.value = room.effective.night_temperature;
+  form.elements.night_temperature.placeholder = room.config.night_temperature;
+  for (const day of DAYS) {
+    form.elements[`schedule.${day}`].value = formatSchedule(room.effective.schedule[day]);
+  }
+  markOverrides(card, room);
+}
+
+function markOverrides(card, room) {
+  const overridden = {
+    temperature: room.override.temperature !== null,
+    night_temperature: room.override.night_temperature !== null,
+  };
+  for (const day of DAYS) {
+    overridden[`schedule.${day}`] = room.override.schedule !== null
+      && !sameSchedule({ [day]: room.override.schedule[day] }, { [day]: room.config.schedule[day] });
+  }
+  for (const label of card.node.querySelectorAll("label[data-for]")) {
+    const isOverridden = overridden[label.dataset.for];
+    label.classList.toggle("overridden", isOverridden);
+    label.title = isOverridden ? "Set from this page (not config.yaml)" : "From config.yaml";
+  }
+}
+
+function fillReading(card, room) {
+  const temp = card.node.querySelector('[data-field="temperature"]');
+  const heating = card.node.querySelector('[data-field="heating"]');
+  const details = card.node.querySelector('[data-field="details"]');
+  const r = room.reading;
+  if (!r || r.temperature === null) {
+    temp.textContent = "–";
+    heating.textContent = "no reading";
+    heating.classList.remove("heating");
+    details.textContent = r ? `Target ${r.target}° (${REASONS[r.reason]})` : "Waiting for first update";
+    return;
+  }
+  temp.textContent = `${r.temperature.toFixed(1)}°`;
+  heating.textContent = r.heating ? "heating" : "idle";
+  heating.classList.toggle("heating", r.heating);
+  const time = new Date(r.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  details.textContent =
+    `Floor ${r.floor_temperature.toFixed(1)}° · thermostat set to ${r.heat_set_point}° · `
+    + `target ${r.target}° (${REASONS[r.reason]}) · ${time}`;
+}
+
+function showMessage(name, text, isError) {
+  const el = cards.get(name).node.querySelector(".message");
+  el.textContent = text;
+  el.classList.toggle("error", isError);
+  if (!isError) setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 3000);
+}
+
+function errorText(body) {
+  if (Array.isArray(body.detail)) {
+    return body.detail.map((d) => `${d.loc.slice(1).join(".")}: ${d.msg}`).join("; ");
+  }
+  return body.detail || "Save failed";
+}
+
+async function save(name, settings) {
+  try {
+    const response = await fetch(`/api/rooms/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      showMessage(name, errorText(body), true);
+      return;
+    }
+    fillForm(cards.get(name), body);
+    showMessage(name, "Saved", false);
+    setTimeout(refresh, 3000);
+  } catch (error) {
+    showMessage(name, `Save failed: ${error.message}`, true);
+  }
+}
+
+async function refresh() {
+  const summary = document.getElementById("summary");
+  try {
+    const response = await fetch("/api/rooms");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    for (const room of data.rooms) {
+      const card = cards.get(room.name) || createCard(room);
+      fillReading(card, room);
+      card.room = room;
+      markOverrides(card, room);
+    }
+    const price = data.price_now === null ? "price unavailable" : `${data.price_now.toFixed(2)} kr/kWh`;
+    summary.innerHTML = "";
+    summary.append(`${price} · updated ${new Date().toLocaleTimeString()} · `);
+    const legend = document.createElement("span");
+    legend.className = "legend";
+    legend.textContent = "purple = set here";
+    summary.append(legend);
+  } catch (error) {
+    summary.textContent = `Could not load rooms: ${error.message}`;
+  }
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

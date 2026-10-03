@@ -14,8 +14,11 @@ FROM base AS runtime
 COPY --from=python-deps /.venv /.venv
 
 RUN groupadd -r python && useradd --no-log-init -rm -d /home/python -g python python
-RUN mkdir /opt/code && chown -R python:python /opt/code
+RUN mkdir /opt/code /data && chown -R python:python /opt/code /data
 ENV PATH="/.venv/bin/:$PATH"
+ENV KJELLER_STATE_DB=/data/kjeller.db
+VOLUME /data
+EXPOSE 8000
 
 WORKDIR /opt/code
 USER python
