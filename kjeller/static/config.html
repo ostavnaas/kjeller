@@ -131,19 +131,19 @@
   .empty { font-size: 13px; color: var(--muted); padding-top: 7px; }
   .range { display: flex; align-items: center; gap: 6px; }
   .range span { color: var(--muted); font-size: 13px; }
-  input[type=time] {
+  input.time {
+    width: 64px;
     padding: 5px 6px;
+    text-align: center;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--surface);
     color: var(--text);
     font: inherit;
     font-variant-numeric: tabular-nums;
-    color-scheme: light dark;
-    min-width: 0;
   }
-  input[type=time]:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
-  input[type=time].invalid { border-color: var(--error); }
+  input.time:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  input.time.invalid { border-color: var(--error); }
   .icon {
     width: 28px;
     height: 28px;
@@ -283,6 +283,12 @@ function renderDay(card, day, ranges) {
     });
     for (const input of [fromInput, toInput]) {
       input.addEventListener("input", () => markChanges(card));
+      input.addEventListener("blur", () => {
+        const time = normalizeTime(input.value);
+        if (time) input.value = time;
+        input.classList.toggle("invalid", !time);
+        markChanges(card);
+      });
     }
     range.append(fromInput, dash, toInput, remove);
     row.append(range);
@@ -290,11 +296,25 @@ function renderDay(card, day, ranges) {
   markChanges(card);
 }
 
+// 24-hour HH:MM. Accepts "6", "630", "1745", "6:30" and returns null if invalid.
+// A text field instead of <input type="time">, which shows AM/PM in 12-hour locales.
+function normalizeTime(text) {
+  const match = text.trim().match(/^(\d{1,2})(?:[:.]?(\d{2}))?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  if (hours > 23 || minutes > 59) return null;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
 function timeInput(value, label) {
   const input = document.createElement("input");
-  input.type = "time";
+  input.className = "time";
+  input.inputMode = "numeric";
+  input.maxLength = 5;
+  input.placeholder = "HH:MM";
+  input.autocomplete = "off";
   input.value = value;
-  input.required = true;
   input.setAttribute("aria-label", label);
   return input;
 }
@@ -302,7 +322,7 @@ function timeInput(value, label) {
 function readDay(card, day) {
   return [...card.node.querySelectorAll(`.day[data-day="${day}"] .range`)].map((range) => {
     const [from, to] = range.querySelectorAll("input");
-    return [from.value, to.value];
+    return [normalizeTime(from.value) || from.value, normalizeTime(to.value) || to.value];
   });
 }
 
@@ -318,10 +338,12 @@ function readSchedule(card) {
 function validateSchedule(card) {
   let valid = true;
   for (const range of card.node.querySelectorAll(".range")) {
-    const [from, to] = range.querySelectorAll("input");
-    const ok = from.value && to.value && from.value < to.value;
-    from.classList.toggle("invalid", !ok);
-    to.classList.toggle("invalid", !ok);
+    const [fromInput, toInput] = range.querySelectorAll("input");
+    const from = normalizeTime(fromInput.value);
+    const to = normalizeTime(toInput.value);
+    const ok = Boolean(from && to && from < to);
+    fromInput.classList.toggle("invalid", !ok);
+    toInput.classList.toggle("invalid", !ok);
     valid &&= ok;
   }
   return valid;
@@ -374,7 +396,7 @@ function createCard(room) {
   node.querySelector("form").addEventListener("submit", (event) => {
     event.preventDefault();
     if (!validateSchedule(card)) {
-      showMessage(room.name, "Each range needs a from time before its to time", true);
+      showMessage(room.name, "Use 24-hour HH:MM, with from before to", true);
       return;
     }
     save(room.name, readForm(card));

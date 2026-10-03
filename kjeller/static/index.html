@@ -127,7 +127,7 @@ async function refresh() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     rooms.replaceChildren(...data.rooms.map(roomRow));
-    document.getElementById("updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    document.getElementById("updated").textContent = `Updated ${new Date().toLocaleTimeString([], { hourCycle: "h23" })}`;
   } catch (error) {
     const message = document.createElement("div");
     message.className = "error";
