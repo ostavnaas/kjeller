@@ -112,6 +112,11 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/config", include_in_schema=False)
+def config_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "config.html")
+
+
 @app.get("/api/rooms")
 def get_rooms() -> Overview:
     config = controller.load_file_config()

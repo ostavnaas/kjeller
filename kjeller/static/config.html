@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kjeller settings</title>
+<style>
+  :root {
+    --bg: #f5f5f4;
+    --card: #ffffff;
+    --surface: #f5f5f4;
+    --text: #1c1917;
+    --muted: #78716c;
+    --border: #e7e5e4;
+    --accent: #2563eb;
+    --accent-soft: #dbeafe;
+    --override: #7c3aed;
+    --error: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1917;
+      --card: #292524;
+      --surface: #1c1917;
+      --text: #f5f5f4;
+      --muted: #a8a29e;
+      --border: #44403c;
+      --accent: #60a5fa;
+      --accent-soft: #1e3a5f;
+      --override: #a78bfa;
+      --error: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.4 system-ui, sans-serif;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: 1200px;
+    margin: 0 auto 16px;
+  }
+  h1 { margin: 0; font-size: 22px; }
+  a { color: var(--accent); text-decoration: none; }
+  .muted { color: var(--muted); font-size: 13px; }
+  main {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 16px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px;
+  }
+  .card h2 { margin: 0 0 8px; font-size: 18px; text-transform: capitalize; }
+
+  h3 {
+    font-size: 12px;
+    margin: 16px 0 8px;
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+
+  /* Temperature steppers */
+  .steppers { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stepper {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 8px 8px;
+    text-align: center;
+  }
+  .stepper-label { font-size: 12px; color: var(--muted); }
+  .stepper-control {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    margin: 4px 0 2px;
+  }
+  .stepper-value {
+    font-size: 30px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    min-width: 3ch;
+  }
+  .stepper-hint { font-size: 11px; color: var(--muted); min-height: 1.4em; }
+  .stepper.changed .stepper-value,
+  .day.changed .day-name { color: var(--override); }
+  .round {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .round:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .round:disabled { opacity: .35; cursor: default; }
+
+  /* Schedule */
+  .day {
+    display: grid;
+    grid-template-columns: 44px 1fr 32px;
+    align-items: start;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .day:last-child { border-bottom: none; }
+  .day-name { font-size: 13px; font-weight: 600; padding-top: 7px; }
+  .ranges { display: flex; flex-direction: column; gap: 6px; }
+  .empty { font-size: 13px; color: var(--muted); padding-top: 7px; }
+  .range { display: flex; align-items: center; gap: 6px; }
+  .range span { color: var(--muted); font-size: 13px; }
+  input[type=time] {
+    padding: 5px 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    color-scheme: light dark;
+    min-width: 0;
+  }
+  input[type=time]:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  input[type=time].invalid { border-color: var(--error); }
+  .icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .icon:hover { background: var(--surface); color: var(--text); }
+  .icon.add { margin-top: 2px; color: var(--accent); }
+
+  .actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+  button.text {
+    padding: 7px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .message { font-size: 13px; }
+  .message.error { color: var(--error); }
+  .legend { color: var(--override); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Settings</h1>
+  <nav class="muted"><a href="/">← Status</a> · <span id="summary">Loading…</span></nav>
+</header>
+<main id="rooms"></main>
+
+<template id="room-template">
+  <section class="card">
+    <h2></h2>
+    <form novalidate>
+      <div class="steppers">
+        <div class="stepper" data-name="temperature">
+          <div class="stepper-label">Day</div>
+          <div class="stepper-control">
+            <button type="button" class="round" data-step="-1" aria-label="Lower day temperature">−</button>
+            <span class="stepper-value" aria-live="polite"></span>
+            <button type="button" class="round" data-step="1" aria-label="Raise day temperature">+</button>
+          </div>
+          <div class="stepper-hint"></div>
+        </div>
+        <div class="stepper" data-name="night_temperature">
+          <div class="stepper-label">Night</div>
+          <div class="stepper-control">
+            <button type="button" class="round" data-step="-1" aria-label="Lower night temperature">−</button>
+            <span class="stepper-value" aria-live="polite"></span>
+            <button type="button" class="round" data-step="1" aria-label="Raise night temperature">+</button>
+          </div>
+          <div class="stepper-hint"></div>
+        </div>
+      </div>
+      <h3>Day temperature schedule</h3>
+      <div data-field="schedule"></div>
+      <div class="actions">
+        <button type="submit" class="text primary">Save</button>
+        <button type="button" class="text" data-action="reset">Reset to config</button>
+        <span class="message"></span>
+      </div>
+    </form>
+  </section>
+</template>
+
+<script>
+const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const MIN_TEMP = 6;
+const MAX_TEMP = 24;
+const cards = new Map();
+
+function sameRanges(a, b) {
+  return (a || []).join(",") === (b || []).join(",");
+}
+
+function sameSchedule(a, b) {
+  return DAYS.every((day) => sameRanges(a[day], b[day]));
+}
+
+function addMinutes(time, minutes) {
+  const [h, m] = time.split(":").map(Number);
+  const total = Math.min(h * 60 + m + minutes, 23 * 60 + 59);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+// --- Temperature steppers ---------------------------------------------------
+
+function setStepper(card, name, value) {
+  const el = card.node.querySelector(`.stepper[data-name="${name}"]`);
+  el.dataset.value = value;
+  el.querySelector(".stepper-value").textContent = `${value}°`;
+  el.querySelector('[data-step="-1"]').disabled = value <= MIN_TEMP;
+  el.querySelector('[data-step="1"]').disabled = value >= MAX_TEMP;
+  el.querySelector(".stepper-hint").textContent = `config.yaml: ${card.room.config[name]}°`;
+  markChanges(card);
+}
+
+function stepperValue(card, name) {
+  return Number(card.node.querySelector(`.stepper[data-name="${name}"]`).dataset.value);
+}
+
+// --- Schedule -----------------------------------------------------------------
+
+function renderDay(card, day, ranges) {
+  const row = card.node.querySelector(`.day[data-day="${day}"] .ranges`);
+  row.replaceChildren();
+  if (!ranges.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Night all day";
+    row.append(empty);
+  }
+  ranges.forEach(([from, to], index) => {
+    const range = document.createElement("div");
+    range.className = "range";
+    const fromInput = timeInput(from, `${day} from`);
+    const toInput = timeInput(to, `${day} to`);
+    const dash = document.createElement("span");
+    dash.textContent = "–";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `Remove ${day} ${from}–${to}`);
+    remove.addEventListener("click", () => {
+      const current = readDay(card, day);
+      current.splice(index, 1);
+      renderDay(card, day, current);
+    });
+    for (const input of [fromInput, toInput]) {
+      input.addEventListener("input", () => markChanges(card));
+    }
+    range.append(fromInput, dash, toInput, remove);
+    row.append(range);
+  });
+  markChanges(card);
+}
+
+function timeInput(value, label) {
+  const input = document.createElement("input");
+  input.type = "time";
+  input.value = value;
+  input.required = true;
+  input.setAttribute("aria-label", label);
+  return input;
+}
+
+function readDay(card, day) {
+  return [...card.node.querySelectorAll(`.day[data-day="${day}"] .range`)].map((range) => {
+    const [from, to] = range.querySelectorAll("input");
+    return [from.value, to.value];
+  });
+}
+
+function readSchedule(card) {
+  const schedule = {};
+  for (const day of DAYS) {
+    const ranges = readDay(card, day).map(([from, to]) => `${from}-${to}`);
+    schedule[day] = ranges.length ? ranges : null;
+  }
+  return schedule;
+}
+
+function validateSchedule(card) {
+  let valid = true;
+  for (const range of card.node.querySelectorAll(".range")) {
+    const [from, to] = range.querySelectorAll("input");
+    const ok = from.value && to.value && from.value < to.value;
+    from.classList.toggle("invalid", !ok);
+    to.classList.toggle("invalid", !ok);
+    valid &&= ok;
+  }
+  return valid;
+}
+
+// --- Cards --------------------------------------------------------------------
+
+function createCard(room) {
+  const node = document.getElementById("room-template").content.firstElementChild.cloneNode(true);
+  node.querySelector("h2").textContent = room.name;
+  const card = { node, room };
+  cards.set(room.name, card);
+
+  for (const stepper of node.querySelectorAll(".stepper")) {
+    const name = stepper.dataset.name;
+    for (const button of stepper.querySelectorAll("[data-step]")) {
+      button.addEventListener("click", () => {
+        const value = stepperValue(card, name) + Number(button.dataset.step);
+        setStepper(card, name, Math.min(MAX_TEMP, Math.max(MIN_TEMP, value)));
+      });
+    }
+  }
+
+  const scheduleEl = node.querySelector('[data-field="schedule"]');
+  for (const day of DAYS) {
+    const row = document.createElement("div");
+    row.className = "day";
+    row.dataset.day = day;
+    const name = document.createElement("div");
+    name.className = "day-name";
+    name.textContent = day.slice(0, 1).toUpperCase() + day.slice(1, 3);
+    const ranges = document.createElement("div");
+    ranges.className = "ranges";
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "icon add";
+    add.textContent = "+";
+    add.setAttribute("aria-label", `Add time range on ${day}`);
+    add.addEventListener("click", () => {
+      const current = readDay(card, day);
+      const last = current.at(-1);
+      const from = last && last[1] ? last[1] : "06:00";
+      current.push(last ? [from, addMinutes(from, 180)] : ["06:00", "09:00"]);
+      renderDay(card, day, current);
+    });
+    row.append(name, ranges, add);
+    scheduleEl.append(row);
+  }
+
+  node.querySelector("form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!validateSchedule(card)) {
+      showMessage(room.name, "Each range needs a from time before its to time", true);
+      return;
+    }
+    save(room.name, readForm(card));
+  });
+  node.querySelector('[data-action="reset"]').addEventListener("click", () => {
+    save(room.name, { temperature: null, night_temperature: null, schedule: null });
+  });
+
+  document.getElementById("rooms").append(node);
+  fillForm(card, room);
+  return card;
+}
+
+// Values equal to config.yaml are sent as null, so they keep following the config.
+function readForm(card) {
+  const config = card.room.config;
+  const temperature = stepperValue(card, "temperature");
+  const night = stepperValue(card, "night_temperature");
+  const schedule = readSchedule(card);
+  return {
+    temperature: temperature === config.temperature ? null : temperature,
+    night_temperature: night === config.night_temperature ? null : night,
+    schedule: sameSchedule(schedule, config.schedule) ? null : schedule,
+  };
+}
+
+function fillForm(card, room) {
+  card.room = room;
+  setStepper(card, "temperature", room.effective.temperature);
+  setStepper(card, "night_temperature", room.effective.night_temperature);
+  for (const day of DAYS) {
+    const ranges = (room.effective.schedule[day] || []).map((r) => r.split("-"));
+    renderDay(card, day, ranges);
+  }
+}
+
+// Purple marks values that differ from config.yaml, including unsaved edits.
+function markChanges(card) {
+  const config = card.room.config;
+  for (const stepper of card.node.querySelectorAll(".stepper")) {
+    stepper.classList.toggle("changed", Number(stepper.dataset.value) !== config[stepper.dataset.name]);
+  }
+  for (const row of card.node.querySelectorAll(".day")) {
+    const ranges = readDay(card, row.dataset.day).map(([from, to]) => `${from}-${to}`);
+    row.classList.toggle("changed", !sameRanges(ranges, config.schedule[row.dataset.day]));
+  }
+}
+
+function showMessage(name, text, isError) {
+  const el = cards.get(name).node.querySelector(".message");
+  el.textContent = text;
+  el.classList.toggle("error", isError);
+  if (!isError) setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 3000);
+}
+
+function errorText(body) {
+  if (Array.isArray(body.detail)) {
+    return body.detail.map((d) => `${d.loc.slice(1).join(".")}: ${d.msg}`).join("; ");
+  }
+  return body.detail || "Save failed";
+}
+
+async function save(name, settings) {
+  try {
+    const response = await fetch(`/api/rooms/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      showMessage(name, errorText(body), true);
+      return;
+    }
+    fillForm(cards.get(name), body);
+    showMessage(name, "Saved", false);
+  } catch (error) {
+    showMessage(name, `Save failed: ${error.message}`, true);
+  }
+}
+
+async function load() {
+  const summary = document.getElementById("summary");
+  try {
+    const response = await fetch("/api/rooms");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    for (const room of data.rooms) createCard(room);
+    summary.replaceChildren();
+    const legend = document.createElement("span");
+    legend.className = "legend";
+    legend.textContent = "purple = differs from config.yaml";
+    summary.append(legend);
+  } catch (error) {
+    summary.textContent = `Could not load rooms: ${error.message}`;
+  }
+}
+
+load();
+</script>
+</body>
+</html>
