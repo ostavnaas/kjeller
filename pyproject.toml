@@ -1,23 +1,26 @@
-[tool.pylint.'MESSAGES CONTROL']
-
-max-line-length = 88
-
-disable = [
-  "missing-docstring",
-  "unused-argument",
-  "no-value-for-parameter",
-  "no-member",
-  "no-else-return",
-  "line-too-long",
-  "fixme",
-  "protected-access",
-  "too-few-public-methods",
+[project]
+name = "kjeller"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi",
+  "httpx",
+  "pydantic",
+  "pyyaml",
+  "uvicorn",
 ]
 
+[dependency-groups]
+dev = [
+  "ruff",
+  "ty",
+  "pyright",
+  "types-pyyaml",
+]
 
-[tool.pylint.MISCELLANEOUS]
-notes = ["FIXME"]
+[tool.ruff]
+line-length = 88
 
-
-[tool.pylint.BASIC]
-good-names= ["e", "r", "deConz"]
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]  # long lines are left to the formatter

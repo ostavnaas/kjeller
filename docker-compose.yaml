@@ -1,0 +1,14 @@
+services:
+  kjeller:
+    build:
+      context: .
+    ports:
+      - "8000:8000"
+    environment:
+      KJELLER_STATE_DB: /data/kjeller.db
+    volumes:
+      - kjeller-data:/data
+    restart: unless-stopped
+
+volumes:
+  kjeller-data:

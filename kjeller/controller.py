@@ -2,7 +2,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -71,7 +71,7 @@ class PrometheusExport:
     heating: bool
 
 
-class Weekday(str, Enum):
+class Weekday(StrEnum):
     MONDAY = "monday"
     TUESDAY = "tuesday"
     WEDNESDAY = "wednesday"
@@ -295,7 +295,7 @@ def get_heatsetpoint_sensor(uniqueid: str, deconz: deConz) -> Termostat | None:
 
 
 def load_file_config() -> Config:
-    with open("config.yaml", "r", encoding="utf-8") as file:
+    with open("config.yaml", encoding="utf-8") as file:
         return Config.model_validate(yaml.full_load(file))
 
 
