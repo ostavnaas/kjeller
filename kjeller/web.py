@@ -48,7 +48,7 @@ class Reading(BaseModel):
     heat_set_point: float | None
     heating: bool | None
     target: int
-    reason: Literal["schedule", "night", "price"]
+    reason: Literal["schedule", "night", "price", "manual"]
     updated_at: datetime
 
 

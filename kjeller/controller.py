@@ -13,6 +13,10 @@ from pydantic import AfterValidator, AliasPath, BaseModel, Field, ValidationErro
 
 logger = logging.getLogger(__name__)
 
+# How long a heatsetpoint set by hand on the thermostat, higher than the
+# schedule wants, is kept before the schedule takes over again.
+MANUAL_OVERRIDE_MINUTES = 60
+
 
 class TibberApiError(Exception):
     pass
@@ -237,13 +241,14 @@ class Tibber:
         return self.price_now >= price_cut_off
 
 
-def adjust_temperature(uniqueid: str, temperature: int, deconz: deConz) -> None:
-    set_temp: int = 0
-
+def clamp_temperature(temperature: int) -> int:
     if temperature <= 5 or temperature >= 25:
-        set_temp = 10 * 100
-    else:
-        set_temp = temperature * 100
+        return 10
+    return temperature
+
+
+def adjust_temperature(uniqueid: str, temperature: int, deconz: deConz) -> None:
+    set_temp = clamp_temperature(temperature) * 100
 
     url = f"{deconz.endpoint}/api/{deconz.api_key}/sensors/{uniqueid}/config"
 
@@ -329,8 +334,14 @@ def night_temperature(room: RoomConfig, global_config: GlobalConfig) -> int:
 class RoomStatus:
     termostat: Termostat | None
     target: int
-    reason: Literal["schedule", "night", "price"]
+    reason: Literal["schedule", "night", "price", "manual"]
     updated_at: datetime
+
+
+@dataclass
+class ManualOverride:
+    temperature: float
+    until: datetime
 
 
 @dataclass
@@ -343,23 +354,63 @@ class Status:
 status = Status()
 # Set to run the control loop now instead of waiting for the next iteration.
 wake = threading.Event()
+# Heatsetpoint we last wrote to each room's thermostat, to tell our own
+# changes apart from ones made by hand.
+last_set: dict[str, float] = {}
+# Rooms where a higher heatsetpoint was set by hand and is being kept.
+manual_overrides: dict[str, ManualOverride] = {}
+
+
+def manual_override(room_name: str, termostat: Termostat, target: int) -> bool:
+    """True while a higher heatsetpoint set by hand on the thermostat is kept."""
+    set_point = termostat.heat_set_point
+    now = datetime.now(UTC)
+
+    if set_point <= clamp_temperature(target):
+        manual_overrides.pop(room_name, None)
+        return False
+
+    override = manual_overrides.get(room_name)
+    if override is not None and override.temperature == set_point:
+        if now < override.until:
+            return True
+        logger.info("%s: Manual temperature %s expired", room_name, set_point)
+        del manual_overrides[room_name]
+        return False
+
+    if set_point == last_set.get(room_name):
+        # Higher only because the schedule lowered the target since we set it.
+        return False
+
+    until = now + timedelta(minutes=MANUAL_OVERRIDE_MINUTES)
+    logger.info(
+        "%s: Manual temperature %s above schedule %s, keeping until %s",
+        room_name,
+        set_point,
+        target,
+        until,
+    )
+    manual_overrides[room_name] = ManualOverride(set_point, until)
+    return True
 
 
 def ensure_temperature(
-    uniqueid: str, set_temperature: int, room_name: str, deconz: deConz
-) -> Termostat | None:
-    if (termostat := get_heatsetpoint_sensor(uniqueid, deconz)) is not None:
-        if termostat.heat_set_point != set_temperature:
-            logger.info("%s: Setting new temperature %s", room_name, set_temperature)
-            adjust_temperature(uniqueid, set_temperature, deconz)
-        write_stats_to_prometheuse(termostat)
-    return termostat
+    termostat: Termostat,
+    uniqueid: str,
+    set_temperature: int,
+    room_name: str,
+    deconz: deConz,
+) -> None:
+    if termostat.heat_set_point != set_temperature:
+        logger.info("%s: Setting new temperature %s", room_name, set_temperature)
+        adjust_temperature(uniqueid, set_temperature, deconz)
+    last_set[room_name] = clamp_temperature(set_temperature)
 
 
 def set_schedule(config: Config, tibber: Tibber):
     for room in config.room:
         set_temperature = night_temperature(room, config.global_config)
-        reason: Literal["schedule", "night", "price"] = "night"
+        reason: Literal["schedule", "night", "price", "manual"] = "night"
 
         if tibber.exceed_max_price(room.max_price or config.global_config.max_price):
             logger.info(
@@ -372,9 +423,16 @@ def set_schedule(config: Config, tibber: Tibber):
             set_temperature = day_temperature(room, config.global_config)
             reason = "schedule"
 
-        termostat = ensure_temperature(
-            room.uniqueid, set_temperature, room.name, config.deconz
-        )
+        termostat = get_heatsetpoint_sensor(room.uniqueid, config.deconz)
+        if termostat is not None:
+            if manual_override(room.name, termostat, set_temperature):
+                set_temperature = int(termostat.heat_set_point)
+                reason = "manual"
+            else:
+                ensure_temperature(
+                    termostat, room.uniqueid, set_temperature, room.name, config.deconz
+                )
+            write_stats_to_prometheuse(termostat)
         status.rooms[room.name] = RoomStatus(
             termostat, set_temperature, reason, datetime.now(UTC)
         )
